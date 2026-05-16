@@ -9,50 +9,61 @@ from app.config import GIFT_CODE_API, REDEEM_API
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = 15 * 60  # seconds
-MAX_ATTEMPTS = 2
+MAX_ATTEMPTS = 3
+RETRY_BACKOFF = 5         # seconds between non-429 retries
+RATE_LIMIT_BACKOFF = 45   # seconds to wait after a 429
+INTER_ACCOUNT_DELAY = 3   # seconds between accounts to avoid triggering rate limits
 
 _sem = asyncio.Semaphore(1)
 
 
+def _is_rate_limited(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
+
+
 async def _redeem_account(client: httpx.AsyncClient, code: str, player_id: str, naam: str) -> None:
     async with _sem:
-        for attempt in range(1, MAX_ATTEMPTS + 1):
-            try:
-                resp = await redeemer.redeem_code(client, player_id, code, REDEEM_API)
+        try:
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                try:
+                    resp = await redeemer.redeem_code(client, player_id, code, REDEEM_API)
 
-                if redeemer.is_success(resp) or redeemer.is_already_redeemed(resp):
-                    await database.save_attempt(code, player_id, 'success', attempt)
-                    logger.info("[%s] %s (%s) — success on attempt %d", code, naam, player_id, attempt)
-                    return
+                    if redeemer.is_success(resp) or redeemer.is_already_redeemed(resp):
+                        await database.save_attempt(code, player_id, 'success', attempt)
+                        logger.info("[%s] %s (%s) — success on attempt %d", code, naam, player_id, attempt)
+                        return
 
-                msg = resp.get('msg', '')
-                if attempt < MAX_ATTEMPTS and not redeemer.is_permanent_failure(resp):
-                    logger.warning(
-                        "[%s] %s (%s) — attempt %d failed (%s), retrying...",
-                        code, naam, player_id, attempt, msg,
-                    )
-                    await asyncio.sleep(5)
-                else:
-                    await database.save_attempt(code, player_id, 'failed', attempt, msg)
-                    logger.error(
-                        "[%s] %s (%s) — failed after %d attempts: %s",
-                        code, naam, player_id, attempt, msg,
-                    )
-                    return
+                    msg = resp.get('msg', '')
+                    if attempt < MAX_ATTEMPTS and not redeemer.is_permanent_failure(resp):
+                        logger.warning(
+                            "[%s] %s (%s) — attempt %d failed (%s), retrying...",
+                            code, naam, player_id, attempt, msg,
+                        )
+                        await asyncio.sleep(RETRY_BACKOFF)
+                    else:
+                        await database.save_attempt(code, player_id, 'failed', attempt, msg)
+                        logger.error(
+                            "[%s] %s (%s) — failed after %d attempts: %s",
+                            code, naam, player_id, attempt, msg,
+                        )
+                        return
 
-            except Exception as exc:
-                if attempt < MAX_ATTEMPTS:
-                    logger.warning(
-                        "[%s] %s (%s) — attempt %d error (%s), retrying...",
-                        code, naam, player_id, attempt, exc,
-                    )
-                    await asyncio.sleep(5)
-                else:
-                    await database.save_attempt(code, player_id, 'error', attempt, str(exc))
-                    logger.error(
-                        "[%s] %s (%s) — error after %d attempts: %s",
-                        code, naam, player_id, attempt, exc,
-                    )
+                except Exception as exc:
+                    if attempt < MAX_ATTEMPTS:
+                        backoff = RATE_LIMIT_BACKOFF if _is_rate_limited(exc) else RETRY_BACKOFF
+                        logger.warning(
+                            "[%s] %s (%s) — attempt %d error (%s), retrying in %ds...",
+                            code, naam, player_id, attempt, exc, backoff,
+                        )
+                        await asyncio.sleep(backoff)
+                    else:
+                        await database.save_attempt(code, player_id, 'error', attempt, str(exc))
+                        logger.error(
+                            "[%s] %s (%s) — error after %d attempts: %s",
+                            code, naam, player_id, attempt, exc,
+                        )
+        finally:
+            await asyncio.sleep(INTER_ACCOUNT_DELAY)
 
 
 async def _fetch_codes() -> list[str]:
