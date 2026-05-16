@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 15 * 60  # seconds
 MAX_ATTEMPTS = 3
 RETRY_BACKOFF = 5         # seconds between non-429 retries
-RATE_LIMIT_BACKOFF = 45   # seconds to wait after a 429
+RATE_LIMIT_BACKOFF = 60   # seconds to wait after a 429
 INTER_ACCOUNT_DELAY = 3   # seconds between accounts to avoid triggering rate limits
 
 _sem = asyncio.Semaphore(1)
