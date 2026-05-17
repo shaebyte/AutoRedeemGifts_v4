@@ -1,7 +1,10 @@
 import sqlite3
+import sys
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent.parent / 'data' / 'autoredeemgifts.db'
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.config import DB_PATH
+
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 conn = sqlite3.connect(DB_PATH)

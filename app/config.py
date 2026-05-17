@@ -15,4 +15,4 @@ if not REDEEM_SECRET:
 
 REDEEM_API: str = os.environ.get('REDEEM_API', 'https://kingshot-giftcode.centurygame.com/api')
 
-DB_PATH: Path = BASE_DIR / 'data' / 'autoredeemgifts.db'
+DB_PATH: Path = Path(os.environ.get('DB_PATH', str(BASE_DIR / 'data' / 'autoredeemgifts.db')))

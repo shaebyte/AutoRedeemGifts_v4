@@ -5,3 +5,4 @@ __pycache__/
 data/
 *.db
 CLAUDE.md
+CMD_COMMANDS.txt
