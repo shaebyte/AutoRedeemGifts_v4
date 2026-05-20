@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from ..deps import get_db
 from ..auth import require_mod
@@ -47,16 +47,52 @@ async def get_account(player_id: str, db=Depends(get_db)):
 # --- Moderator ---
 
 @router.get("", dependencies=[Depends(require_mod)])
-async def list_accounts(db=Depends(get_db)):
-    async with db.execute(
-        "SELECT player_id, name, blacklisted, comments, created_at FROM accounts ORDER BY created_at DESC"
-    ) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+async def list_accounts(
+    db=Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=100),
+    search: str = Query("", max_length=100),
+):
+    offset = (page - 1) * limit
+
+    if search:
+        pattern = f"%{search}%"
+        count_row = await (await db.execute(
+            "SELECT COUNT(*) FROM accounts WHERE player_id LIKE ? OR name LIKE ?",
+            (pattern, pattern),
+        )).fetchone()
+        total = count_row[0]
+
+        async with db.execute(
+            """SELECT player_id, name, blacklisted, comments, created_at
+               FROM accounts
+               WHERE player_id LIKE ? OR name LIKE ?
+               ORDER BY created_at DESC
+               LIMIT ? OFFSET ?""",
+            (pattern, pattern, limit, offset),
+        ) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+    else:
+        count_row = await (await db.execute(
+            "SELECT COUNT(*) FROM accounts"
+        )).fetchone()
+        total = count_row[0]
+
+        async with db.execute(
+            """SELECT player_id, name, blacklisted, comments, created_at
+               FROM accounts
+               ORDER BY created_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        ) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+
+    return {"items": items, "total": total}
 
 
 @router.put("/{player_id}", dependencies=[Depends(require_mod)])
 async def update_account(player_id: str, body: AccountUpdate, db=Depends(get_db)):
-    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not fields:
         raise HTTPException(400, "Nothing to update")
     set_clause = ", ".join(f"{k} = ?" for k in fields)
