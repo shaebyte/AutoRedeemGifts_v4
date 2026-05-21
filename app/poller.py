@@ -91,6 +91,8 @@ async def poll_once() -> None:
     if not new_codes:
         logger.info("No new codes found.")
         return
+    
+    await database.cleanup_old_attempts(days=3)
 
     async with httpx.AsyncClient() as client:
         for code in new_codes:

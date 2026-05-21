@@ -56,3 +56,11 @@ async def save_attempt(
             (code, player_id, status, attempt_count, error_message),
         )
         await db.commit()
+
+async def cleanup_old_attempts(days: int = 3) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            DELETE FROM redeem_attempts
+            WHERE redeemed_at < datetime('now', ?)
+        """, (f'-{days} days',))
+        await db.commit()        
