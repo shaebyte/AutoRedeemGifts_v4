@@ -52,40 +52,39 @@ async def list_accounts(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=100),
     search: str = Query("", max_length=100),
+    status: str = Query("all", pattern="^(all|active|banned)$"),
 ):
     offset = (page - 1) * limit
 
+    # Build WHERE clauses dynamically
+    conditions = []
+    params: list = []
+
     if search:
         pattern = f"%{search}%"
-        count_row = await (await db.execute(
-            "SELECT COUNT(*) FROM accounts WHERE player_id LIKE ? OR name LIKE ?",
-            (pattern, pattern),
-        )).fetchone()
-        total = count_row[0]
+        conditions.append("(player_id LIKE ? OR name LIKE ?)")
+        params.extend([pattern, pattern])
 
-        async with db.execute(
-            """SELECT player_id, name, blacklisted, comments, created_at
-               FROM accounts
-               WHERE player_id LIKE ? OR name LIKE ?
-               ORDER BY created_at DESC
-               LIMIT ? OFFSET ?""",
-            (pattern, pattern, limit, offset),
-        ) as cur:
-            items = [dict(r) for r in await cur.fetchall()]
-    else:
-        count_row = await (await db.execute(
-            "SELECT COUNT(*) FROM accounts"
-        )).fetchone()
-        total = count_row[0]
+    if status == "active":
+        conditions.append("blacklisted = 0")
+    elif status == "banned":
+        conditions.append("blacklisted = 1")
 
-        async with db.execute(
-            """SELECT player_id, name, blacklisted, comments, created_at
-               FROM accounts
-               ORDER BY created_at DESC
-               LIMIT ? OFFSET ?""",
-            (limit, offset),
-        ) as cur:
-            items = [dict(r) for r in await cur.fetchall()]
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    count_row = await (await db.execute(
+        f"SELECT COUNT(*) FROM accounts {where}", params
+    )).fetchone()
+    total = count_row[0]
+
+    async with db.execute(
+        f"""SELECT player_id, name, blacklisted, comments, created_at
+            FROM accounts {where}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?""",
+        [*params, limit, offset],
+    ) as cur:
+        items = [dict(r) for r in await cur.fetchall()]
 
     return {"items": items, "total": total}
 
