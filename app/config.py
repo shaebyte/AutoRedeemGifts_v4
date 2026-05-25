@@ -5,14 +5,22 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-GIFT_CODE_API: str = os.environ.get('GIFT_CODE_API', '')
-if not GIFT_CODE_API:
-    raise RuntimeError("GIFT_CODE_API not set in .env")
+def _require(key: str) -> str:
+    val = os.environ.get(key, '').strip()
+    if not val:
+        raise RuntimeError(f"{key} is not set in .env")
+    return val
 
-REDEEM_SECRET: str = os.environ.get('REDEEM_SECRET', '')
-if not REDEEM_SECRET:
-    raise RuntimeError("REDEEM_SECRET not set in .env")
+def _optional(key: str, default: str) -> str:
+    return os.environ.get(key, default).strip()
 
-REDEEM_API: str = os.environ.get('REDEEM_API', 'https://kingshot-giftcode.centurygame.com/api')
+# Verplichte variabelen
+GIFT_CODE_API   = _require('GIFT_CODE_API')
+REDEEM_SECRET   = _require('REDEEM_SECRET')
+JWT_SECRET      = _require('JWT_SECRET')
+MOD_PASSWORD    = _require('MOD_PASSWORD')
 
-DB_PATH: Path = Path(os.environ.get('DB_PATH', str(BASE_DIR / 'data' / 'autoredeemgifts.db')))
+# Optionele variabelen met fallback
+REDEEM_API      = _optional('REDEEM_API', 'https://kingshot-giftcode.centurygame.com/api')
+DB_PATH         = Path(_optional('DB_PATH', str(BASE_DIR / 'data' / 'autoredeemgifts.db')))
+ALLOWED_ORIGINS = _optional('ALLOWED_ORIGINS', 'http://localhost:5173').split(',')
