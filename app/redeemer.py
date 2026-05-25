@@ -23,6 +23,7 @@ async def fetch_player_info(player_id: str, api_base: str) -> dict:
     """Validates that a player_id exists and returns game data."""
     async with httpx.AsyncClient() as client:
         result = await _login(client, player_id, api_base)
+    print("RAW RESULT:", result)
 
     if result.get("code") != 0:
         raise ValueError(result.get("msg", "Player not found"))
