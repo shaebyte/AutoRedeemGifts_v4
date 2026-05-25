@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .config import ALLOWED_ORIGINS          # ← direct uit config importeren
+from app.config import ALLOWED_ORIGINS
 from .auth import router as auth_router
 from .routes.accounts import router as accounts_router
 from .routes.gift_codes import router as codes_router
