@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from ..deps import get_db
 from ..auth import require_mod
+from ..limiter import limiter
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -20,7 +21,8 @@ class AccountUpdate(BaseModel):
 # --- Public ---
 
 @router.post("", status_code=201)
-async def create_account(body: AccountCreate, db=Depends(get_db)):
+@limiter.limit("5/minute")
+async def create_account(request: Request, body: AccountCreate, db=Depends(get_db)):
     try:
         await db.execute(
             "INSERT INTO accounts (player_id, name) VALUES (?, ?)",
