@@ -17,7 +17,17 @@ async def _login(client: httpx.AsyncClient, player_id: str, api_base: str) -> No
     body = f"sign={_sign(form_str)}&{form_str}"
     response = await client.post(f"{api_base}/player", headers=_HEADERS, data=body, timeout=30.0)
     response.raise_for_status()
+    return response.json()
 
+async def fetch_player_info(player_id: str, api_base: str) -> dict:
+    """Validates that a player_id exists and returns game data."""
+    async with httpx.AsyncClient() as client:
+        result = await _login(client, player_id, api_base)
+
+    if result.get("code") != 0:
+        raise ValueError(result.get("msg", "Player not found"))
+
+    return result["data"]  # fid, nickname, kid, stove_lv, avatar_image
 
 async def redeem_code(client: httpx.AsyncClient, player_id: str, code: str, api_base: str) -> dict:
     await _login(client, player_id, api_base)

@@ -1,8 +1,11 @@
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from ..deps import get_db
 from ..auth import require_mod
 from ..limiter import limiter
+from app.redeemer import fetch_player_info
+from app.config import REDEEM_API
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -16,7 +19,6 @@ class AccountUpdate(BaseModel):
     name: str | None = None
     blacklisted: bool | None = None
     comments: str | None = None
-
 
 # --- Public ---
 
@@ -33,6 +35,17 @@ async def create_account(request: Request, body: AccountCreate, db=Depends(get_d
         raise HTTPException(409, "Account already exists")
     return {"player_id": body.player_id}
 
+@router.get("/validate/{player_id}")
+async def validate_player(player_id: str):
+    try:
+        data = await fetch_player_info(player_id, REDEEM_API)
+        return data
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except httpx.HTTPStatusError:
+        raise HTTPException(status_code=404, detail="Player not found in game.")
+    except Exception:
+        raise HTTPException(status_code=502, detail="Game API unreachable, try again later.")
 
 @router.get("/{player_id}")
 async def get_account(player_id: str, db=Depends(get_db)):
@@ -43,8 +56,7 @@ async def get_account(player_id: str, db=Depends(get_db)):
         row = await cur.fetchone()
     if not row:
         raise HTTPException(404, "Not found")
-    return dict(row)
-
+    return dict(row)    
 
 # --- Moderator ---
 
