@@ -4,66 +4,11 @@ import logging
 import httpx
 
 from app import database, redeemer
-from app.config import GIFT_CODE_API, REDEEM_API
+from app.config import GIFT_CODE_API
 
 logger = logging.getLogger(__name__)
 
-POLL_INTERVAL = 15 * 60  # seconds
-MAX_ATTEMPTS = 3
-RETRY_BACKOFF = 5         # seconds between non-429 retries
-RATE_LIMIT_BACKOFF = 60   # seconds to wait after a 429
-INTER_ACCOUNT_DELAY = 3   # seconds between accounts to avoid triggering rate limits
-
-_sem = asyncio.Semaphore(1)
-
-
-def _is_rate_limited(exc: Exception) -> bool:
-    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
-
-
-async def _redeem_account(client: httpx.AsyncClient, code: str, player_id: str, naam: str) -> None:
-    async with _sem:
-        try:
-            for attempt in range(1, MAX_ATTEMPTS + 1):
-                try:
-                    resp = await redeemer.redeem_code(client, player_id, code, REDEEM_API)
-
-                    if redeemer.is_success(resp) or redeemer.is_already_redeemed(resp):
-                        await database.save_attempt(code, player_id, 'success', attempt)
-                        logger.info("[%s] %s (%s) — success on attempt %d", code, naam, player_id, attempt)
-                        return
-
-                    msg = resp.get('msg', '')
-                    if attempt < MAX_ATTEMPTS and not redeemer.is_permanent_failure(resp):
-                        logger.warning(
-                            "[%s] %s (%s) — attempt %d failed (%s), retrying...",
-                            code, naam, player_id, attempt, msg,
-                        )
-                        await asyncio.sleep(RETRY_BACKOFF)
-                    else:
-                        await database.save_attempt(code, player_id, 'failed', attempt, msg)
-                        logger.error(
-                            "[%s] %s (%s) — failed after %d attempts: %s",
-                            code, naam, player_id, attempt, msg,
-                        )
-                        return
-
-                except Exception as exc:
-                    if attempt < MAX_ATTEMPTS:
-                        backoff = RATE_LIMIT_BACKOFF if _is_rate_limited(exc) else RETRY_BACKOFF
-                        logger.warning(
-                            "[%s] %s (%s) — attempt %d error (%s), retrying in %ds...",
-                            code, naam, player_id, attempt, exc, backoff,
-                        )
-                        await asyncio.sleep(backoff)
-                    else:
-                        await database.save_attempt(code, player_id, 'error', attempt, str(exc))
-                        logger.error(
-                            "[%s] %s (%s) — error after %d attempts: %s",
-                            code, naam, player_id, attempt, exc,
-                        )
-        finally:
-            await asyncio.sleep(INTER_ACCOUNT_DELAY)
+POLL_INTERVAL = 5 * 60
 
 
 async def _fetch_codes() -> list[str]:
@@ -74,6 +19,11 @@ async def _fetch_codes() -> list[str]:
     return [item['code'] for item in data.get('data', {}).get('giftCodes', [])]
 
 
+def _on_redeemer_done(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        logger.error("Redeemer crashed: %s", task.exception())
+
+
 async def poll_once() -> None:
     logger.info("Polling %s for new gift codes...", GIFT_CODE_API)
     try:
@@ -82,28 +32,16 @@ async def poll_once() -> None:
         logger.error("Failed to fetch gift codes: %s", exc)
         return
 
-    new_codes: list[str] = []
+    found_new = False
     for code in codes:
         if await database.save_gift_code(code):
             logger.info("New code: %s", code)
-            new_codes.append(code)
+            found_new = True
+            task = asyncio.create_task(redeemer.redeem_all(code))
+            task.add_done_callback(_on_redeemer_done)
 
-    if not new_codes:
+    if not found_new:
         logger.info("No new codes found.")
-        return
-    
-    await database.cleanup_old_attempts(days=3)
-
-    async with httpx.AsyncClient() as client:
-        for code in new_codes:
-            accounts = await database.get_accounts_to_redeem(code)
-            if not accounts:
-                logger.info("[%s] No accounts to redeem for.", code)
-                continue
-            logger.info("[%s] Redeeming for %d account(s)...", code, len(accounts))
-            await asyncio.gather(
-                *[_redeem_account(client, code, acc['player_id'], acc['name']) for acc in accounts]
-            )
 
 
 async def run_poller() -> None:
